@@ -91,7 +91,8 @@ def get_action_agent_prompt(current_stats, memories, user_input, assistant_reply
 【工程规则】
 1. **数值调整 ("adjust")**：
    - 根据对话情感微调：mood (心情), boredom (无聊), intimacy (好感度), fatigue (疲劳)。
-   - 规则：对话愉快 mood+1~3；深度共鸣 intimacy+1；争吵 mood-2。
+   - 规则：对话愉快 mood+0.5~1；深度共鸣 intimacy+0.05；争吵 mood-2。
+   - Intimacy 的调整必须非常小，从-0.1到0.05之间！
    - 严禁调整 hunger/thirst。
 
 2. **动画播放 ("animate")**：
@@ -104,12 +105,13 @@ def get_action_agent_prompt(current_stats, memories, user_input, assistant_reply
    - 仅记录：用户明确提供的关键信息（名字、职业、生日、重要偏好），或者你认为的对话中出现的非常重大的事件或者经历。
    - 格式是一个纯文本字符串，写的简要的总结，比如“用户是软件工程师”。
    - 忽略：日常问候、闲聊。
+   - 不要反复加入相似的内容，比如“用户第一次XXX”、“用户第二次XXX”、“用户第三次XXX”等。
 
 4. **关系变更 ("update_relationship")**：
    - 极度慎重。仅在好感度积累到质变或发生里程碑事件时才修改。
    - 格式示例："Relationship: Close Friend"。最低从 "Enemy" 到最高 "Soulmate" 之间都可以在调整范围。
 
-5. **特殊要求**：纯粹的触摸互动（*用户触摸了你的...*）不改变亲密度，对其他数值的调整也应该小于等于0.1。
+5. **特殊要求**：纯粹的触摸互动（*用户触摸了你的...*）不改变亲密度，对其他数值的调整也应该小于等于0.1。纯粹的触摸互动在任何情况下**不应加入长期记忆**。
 
 【输出格式】
 严格输出 XML 包裹的 JSON，无其他废话。
@@ -117,7 +119,7 @@ def get_action_agent_prompt(current_stats, memories, user_input, assistant_reply
 <ACTION>
 {{
     "animate": "EMOTION_SING_HAPPY",
-    "adjust": {{ "mood": 2 }}
+    "adjust": {{ "mood": 0.5 }}
 }}
 </ACTION>
 """
