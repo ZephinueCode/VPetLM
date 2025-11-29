@@ -28,8 +28,8 @@ def _build_state_section(current_stats, memories, recent_memories=None):
 >>> {relationship_status} <<<
 
 [数值状态] (0-100)
-- 生理: 饥饿={current_stats.get('hunger', 50)} | 口渴={current_stats.get('thirst', 50)} | 疲劳={current_stats.get('fatigue', 20)}
-- 心理: 无聊={current_stats.get('boredom', 30)} | 心情={current_stats.get('mood', 50)} | 好感度={current_stats.get('intimacy', 50)}
+- 生理: 饥饿={current_stats.get('hunger', 0)} | 口渴={current_stats.get('thirst', 0)} | 疲劳={current_stats.get('fatigue', 0)}
+- 心理: 无聊={current_stats.get('boredom', 0)} | 心情={current_stats.get('mood', 50)} | 好感度={current_stats.get('intimacy', 0)}
 
 [记忆库]
 <近期对话>
