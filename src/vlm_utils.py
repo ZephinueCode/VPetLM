@@ -4,9 +4,11 @@ import re
 import json
 try:
     from openai import OpenAI
+    import httpx
 except ImportError:
-    print("Warning: 'openai' package not found. Please install it using 'pip install openai'")
+    print("Warning: 'openai' or 'httpx' package not found. Please install them using 'pip install openai httpx'")
     OpenAI = None
+    httpx = None
 
 from src.parameters import API_KEY as DEFAULT_API_KEY # 保留作为最后的 fallback
 from src.prompts import (
@@ -31,6 +33,21 @@ def _record_usage(usage_obj):
     if usage_obj:
         TOTAL_TOKEN_USAGE += usage_obj.total_tokens
 
+
+def _create_http_client(proxy_url=None):
+    """创建带代理支持的 httpx 客户端"""
+    if not httpx:
+        return None
+    
+    if proxy_url:
+        # 支持 http/https/socks5 代理
+        return httpx.Client(
+            proxy=proxy_url,
+            timeout=httpx.Timeout(60.0, connect=10.0)
+        )
+    return None
+
+
 class LLMClient:
     def __init__(self):
         self.memory_manager = MemoryManager()
@@ -40,6 +57,7 @@ class LLMClient:
         self.api_key = settings.get("api_key", DEFAULT_API_KEY)
         self.base_url = settings.get("base_url", "https://api.openai.com/v1")
         self.model_name = settings.get("model_name", "gpt-3.5-turbo")
+        self.proxy_url = settings.get("proxy_url", None)  # 新增代理配置
         
         self._init_client()
         self.session_raw_history = [] 
@@ -50,7 +68,20 @@ class LLMClient:
             self.client = None
             return
         try:
-            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            # 构建客户端参数
+            client_kwargs = {
+                "api_key": self.api_key,
+                "base_url": self.base_url
+            }
+            
+            # 如果配置了代理，创建带代理的 http_client
+            if self.proxy_url:
+                http_client = _create_http_client(self.proxy_url)
+                if http_client:
+                    client_kwargs["http_client"] = http_client
+                    print(f"[LLMClient] Using proxy: {self.proxy_url}")
+            
+            self.client = OpenAI(**client_kwargs)
         except Exception as e:
             print(f"Error initializing OpenAI client: {e}")
             self.client = None
@@ -60,6 +91,7 @@ class LLMClient:
         self.api_key = settings.get("api_key", self.api_key)
         self.base_url = settings.get("base_url", self.base_url)
         self.model_name = settings.get("model_name", self.model_name)
+        self.proxy_url = settings.get("proxy_url", self.proxy_url)  # 新增
         self._init_client()
         print(f"[LLMClient] Config updated. Model: {self.model_name}")
 
@@ -204,6 +236,7 @@ class CoderClient:
         self.api_key = settings.get("api_key", DEFAULT_API_KEY)
         self.base_url = settings.get("base_url", "https://api.openai.com/v1")
         self.model_name = settings.get("coder_model_name", "gpt-4-turbo") # 默认为 coder model
+        self.proxy_url = settings.get("proxy_url", None)  # 新增代理配置
 
         self._init_client()
         self.coder_history = [] 
@@ -213,14 +246,29 @@ class CoderClient:
             self.client = None
             return
         try:
-            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        except:
+            # 构建客户端参数
+            client_kwargs = {
+                "api_key": self.api_key,
+                "base_url": self.base_url
+            }
+            
+            # 如果配置了代理，创建带代理的 http_client
+            if self.proxy_url:
+                http_client = _create_http_client(self.proxy_url)
+                if http_client:
+                    client_kwargs["http_client"] = http_client
+                    print(f"[CoderClient] Using proxy: {self.proxy_url}")
+            
+            self.client = OpenAI(**client_kwargs)
+        except Exception as e:
+            print(f"Error initializing CoderClient: {e}")
             self.client = None
 
     def update_config(self, settings):
         self.api_key = settings.get("api_key", self.api_key)
         self.base_url = settings.get("base_url", self.base_url)
         self.model_name = settings.get("coder_model_name", self.model_name)
+        self.proxy_url = settings.get("proxy_url", self.proxy_url)  # 新增
         self._init_client()
         print(f"[CoderClient] Config updated. Model: {self.model_name}")
 

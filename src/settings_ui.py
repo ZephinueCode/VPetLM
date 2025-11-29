@@ -19,12 +19,13 @@ class ApiCheckWorker(QThread):
     """后台线程：检查 API 连接状态"""
     result_signal = pyqtSignal(str, str) # msg, color
 
-    def __init__(self, api_key, base_url, model_name, check_type="connection"):
+    def __init__(self, api_key, base_url, model_name, check_type="connection", proxy=None):
         super().__init__()
         self.api_key = api_key
         self.base_url = base_url
         self.model_name = model_name
         self.check_type = check_type
+        self.proxy = proxy
 
     def run(self):
         if not OpenAI:
@@ -32,7 +33,17 @@ class ApiCheckWorker(QThread):
             return
         
         try:
-            client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            # 构建 httpx 客户端参数
+            import httpx
+            http_client = None
+            if self.proxy:
+                http_client = httpx.Client(proxy=self.proxy)
+            
+            client = OpenAI(
+                api_key=self.api_key, 
+                base_url=self.base_url,
+                http_client=http_client
+            )
             
             if self.check_type == "connection":
                 models = client.models.list()
@@ -60,6 +71,8 @@ class ApiCheckWorker(QThread):
                 self.result_signal.emit("401 Unauthorized (Key错误)", "red")
             elif "404" in error_msg:
                 self.result_signal.emit(f"404: 模型 '{self.model_name}' 不存在", "red")
+            elif "proxy" in error_msg.lower() or "connect" in error_msg.lower():
+                self.result_signal.emit(f"代理连接失败", "red")
             else:
                 self.result_signal.emit(f"错误: {error_msg[:30]}...", "red")
 
@@ -75,7 +88,7 @@ class SettingsWindow(QWidget):
 
     def init_ui(self):
         self.setWindowTitle("Settings")
-        self.resize(500, 640) # 限制高度为 640
+        self.resize(500, 700)
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -88,6 +101,7 @@ class SettingsWindow(QWidget):
             }
             QLabel { font-family: "Microsoft YaHei"; color: #333; font-size: 13px; }
             QLabel#title { font-size: 16px; font-weight: bold; color: #2c3e50; }
+            QLabel#section_title { font-size: 13px; font-weight: bold; color: #4682B4; margin-top: 5px; }
             QTextEdit, QLineEdit {
                 background-color: #ffffff;
                 border: 1px solid #87CEEB;
@@ -96,6 +110,10 @@ class SettingsWindow(QWidget):
                 font-family: "Microsoft YaHei";
                 font-size: 13px;
                 color: #000000;
+            }
+            QLineEdit:disabled {
+                background-color: #f0f0f0;
+                color: #999;
             }
             QDoubleSpinBox, QSpinBox {
                 padding: 5px;
@@ -132,6 +150,15 @@ class SettingsWindow(QWidget):
                 border: none;
                 background-color: transparent;
             }
+            QCheckBox {
+                font-family: "Microsoft YaHei";
+                color: #333;
+                font-size: 13px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
         """)
 
         main_layout = QVBoxLayout(self)
@@ -156,14 +183,14 @@ class SettingsWindow(QWidget):
         
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 5, 0) # 右侧留一点空间给滚动条
+        scroll_layout.setContentsMargins(0, 0, 5, 0)
         scroll_layout.setSpacing(10)
 
         # 2. 基础人设
         scroll_layout.addWidget(QLabel("基础人设 (Persona):"))
         self.persona_edit = QTextEdit()
         self.persona_edit.setPlainText(self.settings.get("persona", ""))
-        self.persona_edit.setMinimumHeight(200) # 设置最小高度确保容易输入
+        self.persona_edit.setMinimumHeight(200)
         scroll_layout.addWidget(self.persona_edit)
 
         # 3. API 设置
@@ -202,6 +229,27 @@ class SettingsWindow(QWidget):
         coder_layout.addWidget(self.coder_model_edit)
         coder_layout.addWidget(btn_check_coder)
         api_layout.addRow("Coder Model:", coder_layout)
+
+        # 代理设置
+        proxy_section_label = QLabel("网络代理")
+        proxy_section_label.setObjectName("section_title")
+        api_layout.addRow(proxy_section_label)
+
+        self.proxy_enabled_check = QCheckBox("启用代理")
+        self.proxy_enabled_check.setChecked(self.settings.get("proxy_enabled", False))
+        self.proxy_enabled_check.stateChanged.connect(self.on_proxy_toggle)
+        api_layout.addRow(self.proxy_enabled_check)
+
+        proxy_url_layout = QHBoxLayout()
+        self.proxy_url_edit = QLineEdit(self.settings.get("proxy_url", ""))
+        self.proxy_url_edit.setPlaceholderText("http://127.0.0.1:7890 或 socks5://127.0.0.1:1080")
+        self.proxy_url_edit.setEnabled(self.settings.get("proxy_enabled", False))
+        btn_check_proxy = QPushButton("测试")
+        btn_check_proxy.setProperty("class", "check-btn")
+        btn_check_proxy.clicked.connect(self.test_proxy)
+        proxy_url_layout.addWidget(self.proxy_url_edit)
+        proxy_url_layout.addWidget(btn_check_proxy)
+        api_layout.addRow("代理地址:", proxy_url_layout)
         
         self.api_status_label = QLabel("Ready")
         self.api_status_label.setStyleSheet("color: gray; font-size: 11px;")
@@ -295,6 +343,31 @@ class SettingsWindow(QWidget):
         main_layout.addWidget(self.frame)
         self.update_usage_display()
 
+    def on_proxy_toggle(self, state):
+        """代理开关切换"""
+        enabled = state == Qt.CheckState.Checked.value
+        self.proxy_url_edit.setEnabled(enabled)
+        if not enabled:
+            self.proxy_url_edit.setPlaceholderText("代理已禁用")
+        else:
+            self.proxy_url_edit.setPlaceholderText("http://127.0.0.1:7890 或 socks5://127.0.0.1:1080")
+
+    def test_proxy(self):
+        """测试代理连接"""
+        proxy_url = self.proxy_url_edit.text().strip()
+        if not proxy_url:
+            self.api_status_label.setText("请输入代理地址")
+            self.api_status_label.setStyleSheet("color: orange;")
+            return
+        
+        self.api_status_label.setText("正在测试代理...")
+        self.api_status_label.setStyleSheet("color: blue;")
+        
+        # 使用线程测试代理
+        self.proxy_test_thread = ProxyTestWorker(proxy_url)
+        self.proxy_test_thread.result_signal.connect(self.on_api_check_result)
+        self.proxy_test_thread.start()
+
     def update_position(self):
         if self.isVisible() and self.pet:
             pet_geo = self.pet.geometry()
@@ -308,15 +381,26 @@ class SettingsWindow(QWidget):
         cost = (tokens / 1_000_000) * 3.0
         self.usage_label.setText(f"本次消耗: {tokens:,} tokens | 预估: ${cost:.4f}")
 
+    def get_current_proxy(self):
+        """获取当前配置的代理地址"""
+        if self.proxy_enabled_check.isChecked():
+            proxy = self.proxy_url_edit.text().strip()
+            return proxy if proxy else None
+        return None
+
     def check_api(self, check_type):
         key = self.api_key_edit.text().strip()
         base = self.base_url_edit.text().strip()
         model = self.model_name_edit.text().strip() if check_type == "chat" else self.coder_model_edit.text().strip()
+        proxy = self.get_current_proxy()
         
-        self.api_status_label.setText(f"正在检查 {check_type}...")
+        status_text = f"正在检查 {check_type}..."
+        if proxy:
+            status_text += " (使用代理)"
+        self.api_status_label.setText(status_text)
         self.api_status_label.setStyleSheet("color: blue;")
         
-        self.api_worker = ApiCheckWorker(key, base, model, check_type)
+        self.api_worker = ApiCheckWorker(key, base, model, check_type, proxy)
         self.api_worker.result_signal.connect(self.on_api_check_result)
         self.api_worker.start()
 
@@ -347,6 +431,8 @@ class SettingsWindow(QWidget):
             "base_url": self.base_url_edit.text().strip(),
             "model_name": self.model_name_edit.text().strip(),
             "coder_model_name": self.coder_model_edit.text().strip(),
+            "proxy_enabled": self.proxy_enabled_check.isChecked(),
+            "proxy_url": self.proxy_url_edit.text().strip(),
             "pet_size": [self.width_spin.value(), self.height_spin.value()],
             "action_probability": self.action_prob_spin.value(),
             "active_chat_probability": self.active_chat_prob_spin.value(),
@@ -355,3 +441,35 @@ class SettingsWindow(QWidget):
         }
         self.settings_saved.emit(new_settings)
         self.hide()
+
+
+class ProxyTestWorker(QThread):
+    """后台线程：测试代理连接"""
+    result_signal = pyqtSignal(str, str)
+
+    def __init__(self, proxy_url):
+        super().__init__()
+        self.proxy_url = proxy_url
+
+    def run(self):
+        try:
+            import httpx
+            
+            # 尝试通过代理访问一个可靠的测试端点
+            with httpx.Client(proxy=self.proxy_url, timeout=10) as client:
+                response = client.get("https://httpbin.org/ip")
+                if response.status_code == 200:
+                    ip_info = response.json().get("origin", "Unknown")
+                    self.result_signal.emit(f"代理连接成功 (IP: {ip_info})", "green")
+                else:
+                    self.result_signal.emit(f"代理响应异常: {response.status_code}", "orange")
+        except ImportError:
+            self.result_signal.emit("错误: 未安装 httpx 库", "red")
+        except Exception as e:
+            error_msg = str(e)
+            if "proxy" in error_msg.lower():
+                self.result_signal.emit("代理连接失败: 请检查地址格式", "red")
+            elif "timeout" in error_msg.lower():
+                self.result_signal.emit("代理连接超时", "red")
+            else:
+                self.result_signal.emit(f"错误: {error_msg[:40]}...", "red")
