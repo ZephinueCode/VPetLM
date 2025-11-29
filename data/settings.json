@@ -1,0 +1,15 @@
+{
+  "persona": "你是一个运行在用户电脑桌面上的虚拟桌宠助手。\n你的性格活泼、可爱，偶尔有点小调皮，同时也非常贴心。\n你喜欢陪伴用户工作、学习和玩耍。你不是一个冷冰冰的机器人，而是一个有血有肉、有情绪的小伙伴。",
+  "api_key": "",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "model_name": "Moonshot-Kimi-K2-Instruct",
+  "coder_model_name": "qwen3-coder-plus",
+  "pet_size": [
+    280,
+    280
+  ],
+  "action_probability": 0.0,
+  "active_chat_probability": 0.2,
+  "active_chat_interval": 60,
+  "smart_touch": true
+}
