@@ -36,7 +36,7 @@ class ActiveChatWorker(QThread):
             if self.mode == "intro":
                 reply, action = self.client.get_self_introduction(self.persona)
             elif self.mode == "goodbye":
-                reply, action = self.client.get_goodbye_message(self.persona)
+                reply, action = self.client.get_goodbye_message(self.persona, self.stats)
             else:
                 reply, action = self.client.initiate_conversation(self.stats, self.persona)
             

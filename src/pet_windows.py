@@ -1,6 +1,43 @@
+import re
+import html
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, 
-                             QPushButton, QLineEdit, QFrame, QFormLayout, QLabel)
-from PyQt6.QtCore import Qt, pyqtSignal
+                             QPushButton, QLineEdit, QFrame, QFormLayout, QLabel, QSizeGrip)
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
+
+class HorizontalGrip(QWidget):
+    """自定义横向拉伸控制柄"""
+    def __init__(self, parent_window):
+        super().__init__(parent_window)
+        self.parent_window = parent_window
+        self.setFixedSize(30, 30)
+        self.setStyleSheet("""
+            background-color: transparent; 
+            border-bottom-right-radius: 20px;
+        """)
+        self.setCursor(Qt.CursorShape.SizeHorCursor) # 设置横向调整光标
+        self.is_resizing = False
+        self.start_pos = None
+
+    def paintEvent(self, event):
+        # 可以画一些斜线或者圆点来提示这是个抓手
+        pass 
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_resizing = True
+            self.start_pos = event.globalPosition()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.is_resizing:
+            delta = event.globalPosition() - self.start_pos
+            new_width = max(250, self.parent_window.width() + int(delta.x())) # 最小宽度限制
+            self.parent_window.resize(new_width, self.parent_window.height())
+            self.start_pos = event.globalPosition()
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.is_resizing = False
 
 class ChatWindow(QWidget):
     def __init__(self, parent_widget, pet_core):
@@ -20,6 +57,8 @@ class ChatWindow(QWidget):
 
         self.container = QFrame()
         self.container.setObjectName("container")
+        
+        # 使用相对布局来放置 Grip
         container_layout = QVBoxLayout(self.container)
         container_layout.setContentsMargins(15, 15, 15, 15)
 
@@ -84,18 +123,42 @@ class ChatWindow(QWidget):
         layout.addWidget(self.container)
         self.setLayout(layout)
 
+        # 添加横向调整 Grip (浮动在右下角)
+        self.grip = HorizontalGrip(self)
+        
+        # 也可以保留默认的 SizeGrip 以备不时之需，但您要求只横向
+        # 如果需要完全禁用垂直调整，必须覆盖 resizeEvent 或使用 fixedHeight，但这里只添加横向 Grip 即可
+
+    def resizeEvent(self, event):
+        # 确保 Grip 始终在右下角
+        super().resizeEvent(event)
+        rect = self.rect()
+        self.grip.move(rect.right() - self.grip.width(), rect.bottom() - self.grip.height())
+
     def update_position(self):
         if self.isVisible():
             pet_geo = self.main_widget.geometry()
-            target_x = pet_geo.x() + pet_geo.width() - 50 
-            target_y = pet_geo.y() + 20 
+            target_x = int(pet_geo.x() + pet_geo.width() - 50)
+            target_y = int(pet_geo.y() + 20)
             self.move(target_x, target_y)
+
+    def _format_text(self, text):
+        """格式化文本：将 *动作* 替换为灰色样式"""
+        # 转义 HTML 字符，防止注入
+        safe_text = html.escape(text)
+        # 替换 *...* 为灰色 span
+        # 注意：这里使用非贪婪匹配 .*?
+        formatted = re.sub(r'\*(.*?)\*', r'<span style="color: gray; font-style: italic;">*\1*</span>', safe_text)
+        return formatted
 
     def send_message(self):
         text = self.input_field.text().strip()
         if not text: return
 
-        self.chat_history.append(f"<div style='color:#003366; margin-bottom:5px;'><b>你:</b> {text}</div>")
+        # 显示格式化后的文本
+        display_text = self._format_text(text)
+        self.chat_history.append(f"<div style='color:#003366; margin-bottom:5px;'><b>你:</b> {display_text}</div>")
+        
         self.input_field.clear()
         self.chat_history.append("<div style='color:#555555; font-style:italic; font-size:12px;'>正在思考...</div>")
         sb = self.chat_history.verticalScrollBar()
@@ -105,7 +168,12 @@ class ChatWindow(QWidget):
         self.core.start_chat(text)
 
     def receive_reply(self, reply):
-        self.chat_history.append(f"<div style='color:#000000; margin-bottom:10px; margin-top:5px;'><b>桌宠:</b> {reply}</div>")
+        # 获取桌宠称呼，默认为 "桌宠"
+        pet_name = self.core.settings.get("pet_name", "桌宠")
+        
+        display_text = self._format_text(reply)
+        self.chat_history.append(f"<div style='color:#000000; margin-bottom:10px; margin-top:5px;'><b>{pet_name}:</b> {display_text}</div>")
+        
         sb = self.chat_history.verticalScrollBar()
         sb.setValue(sb.maximum())
 
@@ -183,7 +251,7 @@ class InitSetupWindow(QWidget):
         form_layout.addRow("我该怎么称呼你？", self.name_edit)
 
         self.birth_edit = QLineEdit()
-        self.birth_edit.setPlaceholderText("例如：1月1日")
+        self.birth_edit.setPlaceholderText("例如：1月1日...")
         form_layout.addRow("你的生日是哪天？", self.birth_edit)
 
         self.job_edit = QLineEdit()
@@ -191,7 +259,7 @@ class InitSetupWindow(QWidget):
         form_layout.addRow("你是做什么的？", self.job_edit)
 
         self.hobby_edit = QLineEdit()
-        self.hobby_edit.setPlaceholderText("例如：画画, 发呆...")
+        self.hobby_edit.setPlaceholderText("例如：画画, 游戏...")
         form_layout.addRow("有什么喜欢的事？", self.hobby_edit)
 
         frame_layout.addLayout(form_layout)

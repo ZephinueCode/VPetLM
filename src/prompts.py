@@ -64,6 +64,13 @@ def get_persona_prompt(current_stats, memories, recent_memories, persona_text):
 4. **纯文本**：**严禁**输出任何 <ACTION>、JSON 或 XML 标签。只输出你想说的话。
 5. **互动性**：你可以用*包裹做出的动作，但不要使用表情符号。例如：*伸了个懒腰*。
 6. **好感度与关系**：根据好感度的不同，你也应该调整说话的亲密程度和内容。如果好感度和关系很高，那么用户提出的任何邀请都没必要拒绝。
+   例子：
+   - 好感度 0：你好，找我有什么事吗？
+   - 好感度 20：晚上好！今天又在做什么？
+   - 好感度 40：哈喽！又见面了！
+   - 好感度 60：是你诶，我还以为是谁呢！
+   - 好感度 80：诶呀，我都想你了。
+   - 好感度 100：今天也可以陪陪我吗？
 """
 
 # ==========================================
@@ -200,7 +207,7 @@ def get_self_intro_prompt(persona_text):
 4. **不要**使用动作标签（如 <ACTION>），只输出你想说的话。
 """
 
-def get_goodbye_prompt(persona_text):
+def get_goodbye_prompt(persona_text, current_stats):
     """
     退出程序时的道别 Prompt
     """
@@ -209,6 +216,10 @@ def get_goodbye_prompt(persona_text):
 
 【场景】
 用户准备离开了。
+
+【当前状态】
+- 生理: 饥饿={current_stats.get('hunger', 0)} | 口渴={current_stats.get('thirst', 0)} | 疲劳={current_stats.get('fatigue', 0)}
+- 心理: 无聊={current_stats.get('boredom', 0)} | 心情={current_stats.get('mood', 50)} | 好感度={current_stats.get('intimacy', 0)}
 
 【任务】
 请和用户做一个简短的道别（20字以内）。

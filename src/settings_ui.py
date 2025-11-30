@@ -1,3 +1,4 @@
+import re
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, 
                              QLabel, QPushButton, QDoubleSpinBox, QSpinBox, 
                              QFormLayout, QFrame, QSizePolicy, QCheckBox, QGroupBox, QLineEdit, QMessageBox, QScrollArea)
@@ -187,11 +188,24 @@ class SettingsWindow(QWidget):
         scroll_layout.setSpacing(10)
 
         # 2. 基础人设
-        scroll_layout.addWidget(QLabel("基础人设 (Persona):"))
+        persona_group = QGroupBox("人设配置 (Persona)")
+        persona_layout = QVBoxLayout(persona_group)
+        
+        # [新增] 称呼输入框
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("桌宠称呼:"))
+        self.pet_name_edit = QLineEdit(self.settings.get("pet_name", "桌宠"))
+        self.pet_name_edit.setPlaceholderText("例如: 派蒙, 星期五 (限8中文/12英文)")
+        name_layout.addWidget(self.pet_name_edit)
+        persona_layout.addLayout(name_layout)
+
+        persona_layout.addWidget(QLabel("详细设定:"))
         self.persona_edit = QTextEdit()
         self.persona_edit.setPlainText(self.settings.get("persona", ""))
-        self.persona_edit.setMinimumHeight(200)
-        scroll_layout.addWidget(self.persona_edit)
+        self.persona_edit.setMinimumHeight(150)
+        persona_layout.addWidget(self.persona_edit)
+        
+        scroll_layout.addWidget(persona_group)
 
         # 3. API 设置
         api_group = QGroupBox("API 配置")
@@ -413,7 +427,7 @@ class SettingsWindow(QWidget):
         reply = QMessageBox.question(self, "确认", "确定要清空所有中期记忆（对话摘要）吗？\n这将导致桌宠忘记之前的聊天上下文。",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            # [修正] 通过 self.pet.core 访问 memory_manager
+            # 通过 self.pet.core 访问 memory_manager
             self.pet.core.memory_manager.clear_recent_memories()
             QMessageBox.information(self, "成功", "中期记忆已清空。")
 
@@ -422,13 +436,41 @@ class SettingsWindow(QWidget):
         reply = QMessageBox.question(self, "警告", "确定要重置长期记忆吗？\n这将清除所有用户画像和关系进度，重置为陌生人！此操作不可逆。",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            # [修正] 通过 self.pet.core 访问 memory_manager
+            # 通过 self.pet.core 访问 memory_manager
             self.pet.core.memory_manager.reset_long_term_memories()
             QMessageBox.information(self, "成功", "长期记忆已重置为默认状态。")
 
+    def _validate_name(self, name):
+        """验证称呼长度 (8个中文字符或12个英文字符)"""
+        # 简单加权算法：中文1.5权重，英文1权重
+        # 8中文 * 1.5 = 12
+        # 12英文 * 1 = 12
+        weight = 0
+        for char in name:
+            if '\u4e00' <= char <= '\u9fff':
+                weight += 1.5
+            else:
+                weight += 1
+        return weight <= 12
+
     def save_settings(self):
+        pet_name = self.pet_name_edit.text().strip()
+        if not self._validate_name(pet_name):
+            QMessageBox.warning(self, "无效输入", "桌宠称呼过长！\n请限制在8个中文字符或12个英文字符以内。")
+            return
+
+        persona_text = self.persona_edit.toPlainText().strip()
+        
+        # [逻辑] 如果称呼不为空，且 Persona 第一句不是“你是[称呼]”，则强制覆盖/添加
+        name_intro = f"你是{pet_name}。"
+        if pet_name and not persona_text.startswith(f"你是{pet_name}"):
+            # 移除旧的 "你是XXX。" 前缀（如果有）
+            persona_text = re.sub(r"^你是.*?。", "", persona_text).strip()
+            persona_text = f"{name_intro}\n{persona_text}"
+
         new_settings = {
-            "persona": self.persona_edit.toPlainText().strip(),
+            "pet_name": pet_name,
+            "persona": persona_text,
             "api_key": self.api_key_edit.text().strip(),
             "base_url": self.base_url_edit.text().strip(),
             "model_name": self.model_name_edit.text().strip(),

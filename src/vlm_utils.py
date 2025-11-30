@@ -207,11 +207,11 @@ class LLMClient:
             print(f"Self Intro Error: {e}")
             return "你好！很高兴见到你！", {}
 
-    def get_goodbye_message(self, persona_text):
+    def get_goodbye_message(self, persona_text, current_stats):
         """生成告别语"""
         if not self.client: return "再见啦！", {}
         
-        prompt = get_goodbye_prompt(persona_text)
+        prompt = get_goodbye_prompt(persona_text, current_stats)
         try:
             completion = self.client.chat.completions.create(
                 model=self.model_name,

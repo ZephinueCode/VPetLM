@@ -28,6 +28,7 @@ DEFAULT_PERSONA_TEXT = """
 
 # 默认设置
 DEFAULT_SETTINGS = {
+    "pet_name": "桌宠",              # [新增] 默认称呼
     "pet_size": [320, 320],
     "action_probability": 0.02,      # 每秒自主行动概率
     "active_chat_probability": 0.2,  # 触发时主动搭话概率

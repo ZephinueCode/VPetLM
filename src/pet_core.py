@@ -144,7 +144,7 @@ class PetCore(QObject):
                 added_info.append(f"{key}({val})")
         
         if added_info:
-            prompt = f"用户填写了个人信息卡：{', '.join(added_info)}。请用开心的语气表示记住了，并问好。"
+            prompt = f"用户填写了个人信息卡：{', '.join(added_info)}。请用礼貌的语气表示记住了，并问好。"
             self.start_chat(prompt)
 
     def start_chat(self, text):
