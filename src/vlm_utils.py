@@ -16,7 +16,8 @@ from src.prompts import (
     get_action_agent_prompt, 
     get_active_initiation_prompt, 
     get_summary_prompt, 
-    get_coder_system_prompt
+    get_coder_system_prompt,
+    get_self_intro_prompt
 )
 from src.memory_utils import MemoryManager
 
@@ -94,6 +95,10 @@ class LLMClient:
         self.proxy_url = settings.get("proxy_url", self.proxy_url)  # 新增
         self._init_client()
         print(f"[LLMClient] Config updated. Model: {self.model_name}")
+
+    def is_ready(self):
+        """检查 API 客户端是否已准备就绪"""
+        return self.client is not None and self.api_key and len(self.api_key) > 5
 
     def _repair_json(self, json_str):
         try:
@@ -177,6 +182,29 @@ class LLMClient:
             self.memory_manager.update_relationship(action_data["update_relationship"])
 
         return text_reply, action_data
+
+    def get_self_introduction(self, persona_text):
+        """生成初次见面的自我介绍"""
+        if not self.client: return "你好呀！我是你的桌面伙伴。（API未连接）", {}
+        
+        prompt = get_self_intro_prompt(persona_text)
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "system", "content": prompt}, {"role": "user", "content": "Start Intro"}],
+                temperature=0.9,
+            )
+            text_reply = completion.choices[0].message.content.strip()
+            _record_usage(completion.usage)
+            text_reply = re.sub(r'<ACTION>.*?</ACTION>', '', text_reply, flags=re.DOTALL).strip()
+            
+            self.context_window.append({"role": "assistant", "content": text_reply})
+            self.session_raw_history.append(f"Pet (Intro): {text_reply}")
+            
+            return text_reply, {}
+        except Exception as e:
+            print(f"Self Intro Error: {e}")
+            return "你好！很高兴见到你！", {}
 
     def initiate_conversation(self, current_stats, persona_text):
         if not self.client: return "...", {}

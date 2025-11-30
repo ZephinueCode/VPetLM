@@ -183,3 +183,21 @@ def get_summary_prompt(chat_history_text, memories):
 对话：
 {chat_history_text}
 """
+
+def get_self_intro_prompt(persona_text):
+    """
+    初次见面自我介绍 Prompt
+    """
+    return f"""
+{persona_text}
+
+【场景】
+你刚刚被用户唤醒/启动，这是你和用户的**第一次见面**。
+目前你们的关系是：陌生人。
+
+【任务】
+1. 做一个简短、符合人设的自我介绍（50字以内）。
+2. 表达出想更了解用户意愿，并引导用户填写屏幕上弹出的“个人信息卡”。
+3. 语气要礼貌、期待，但是又不失距离（你和用户刚认识）。
+4. **不要**使用动作标签（如 <ACTION>），只输出你想说的话。
+"""

@@ -82,7 +82,6 @@ class MemoryManager:
         # 合并默认值，防止旧版本缺少新字段
         settings = DEFAULT_SETTINGS.copy()
         # 递归更新字典比较复杂，这里做简单的一层更新
-        # 注意：如果用户手动删除了 key，这里会补上默认值
         for k, v in data.items():
             settings[k] = v
         return settings
@@ -113,6 +112,14 @@ class MemoryManager:
             memories.append(content)
             self.save_long_term_memories(memories)
             print(f"[Memory] Memorized: {content}")
+
+    def is_fresh_start(self):
+        """判断是否是初次见面（记忆中只有默认的关系条目）"""
+        memories = self.load_long_term_memories()
+        # 如果只有一个元素且是 Relationship 开头，或者为空，则视为 Fresh Start
+        if len(memories) <= 1:
+            return True
+        return False
 
     def update_relationship(self, new_status):
         memories = self.load_long_term_memories()
