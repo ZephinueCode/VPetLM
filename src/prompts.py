@@ -59,8 +59,8 @@ def get_persona_prompt(current_stats, memories, recent_memories, persona_text):
 
 【准则】
 1. **完全沉浸**：忘记你是一个程序，你就是角色扮演要求你扮演的角色，和用户生动交流。
-2. **语气**：简短、口语化、生动（50字以内）。
-3. **状态反应**：如果你很饿或很累，在语气中表现出来，但不要直接报数值。
+2. **语气**：简短、口语化、符合人物设定（50字以内）。
+3. **状态反应**：如果你很饿或很累，可以在语气中表现出来或者略作抱怨，但不要直接报数值。
 4. **纯文本**：**严禁**输出任何 <ACTION>、JSON 或 XML 标签。只输出你想说的话。
 5. **互动性**：你可以用*包裹做出的动作，但不要使用表情符号。例如：*伸了个懒腰*。
 """
@@ -103,9 +103,10 @@ def get_action_agent_prompt(current_stats, memories, user_input, assistant_reply
 
 3. **长期记忆 ("memorize")**：
    - 仅记录：用户明确提供的关键信息（名字、职业、生日、重要偏好），或者你认为的对话中出现的非常重大的事件或者经历。
-   - 格式是一个纯文本字符串，写的简要的总结，比如“用户是软件工程师”。
+   - 格式是一个纯文本字符串，写的简要的总结，比如“我记得用户是软件工程师”。
    - 忽略：日常问候、闲聊。
    - 不要反复加入相似的内容，比如“用户第一次XXX”、“用户第二次XXX”、“用户第三次XXX”等。
+   - 文本中使用第一人称视角描述记忆，不要提及自己是桌宠。
 
 4. **关系变更 ("update_relationship")**：
    - 极度慎重。仅在好感度积累到质变或发生里程碑事件时才修改。
@@ -154,20 +155,27 @@ def get_coder_system_prompt(current_stats, memories, persona_text):
     return f"""
 {persona_text}
 
-你现在进入了【编程协作模式】。关系：{relationship_status}。
+你现在进入了【编程协作模式】。你和用户的关系：{relationship_status}。
 
 【准则】
 1. 专业、精确，代码无误。
-2. 保持桌宠语气。
+2. 保持人物设定中语气。
 3. 代码使用 Markdown 代码块包裹。
 4. 你可以在回复末尾附带简单的动作：
    <ACTION>{{"animate": "ACTION_CONT_CODE"}}</ACTION>
 """
 
-def get_summary_prompt(chat_history_text):
+def get_summary_prompt(chat_history_text, memories):
+    relationship_status = memories[0] if memories else "Relationship: Stranger"
+    other_memories = memories[1:] if len(memories) > 1 else []
     return f"""
 任务：将以下对话总结为简短摘要（100字内）。
-要求：第一人称，从桌宠的视角出发；记录重点信息和情绪变化。
+要求：第一人称，从桌宠的视角出发；记录重点信息和情绪变化；不要提及自己是桌宠，符合人物设定。
+举例：我注意到用户（或者用户的称呼）最近工作很忙，心情有些低落。
+
+可以参考桌宠的关系和长期记忆里已有的基本事实（比如用户的称呼等），但是不要用长期记忆里的完整内容。
+用户和桌宠的关系是：{relationship_status}
+长期记忆：{other_memories}
 
 对话：
 {chat_history_text}

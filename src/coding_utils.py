@@ -352,7 +352,7 @@ class CodingWindow(QWidget):
         self.show()
         if not self.history:
             self.append_system_message("Env Initialized. Mode: Programming.")
-            self.process_input("我们开始编程吧！请根据当前状态准备好环境。", is_system=True)
+            self.process_input("开始编程模式！打个招呼？", is_system=True)
 
     def send_message(self):
         text = self.input_field.toPlainText().strip()

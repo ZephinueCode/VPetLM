@@ -129,7 +129,7 @@ class LLMClient:
             completion = self.client.chat.completions.create(
                 model=self.model_name, # 使用动态配置的模型名
                 messages=persona_messages, 
-                temperature=0.7
+                temperature=0.8
             )
             text_reply = completion.choices[0].message.content.strip()
             _record_usage(completion.usage)
@@ -188,7 +188,7 @@ class LLMClient:
             completion = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": "Start"}],
-                temperature=0.85,
+                temperature=0.9,
             )
             text_reply = completion.choices[0].message.content.strip()
             _record_usage(completion.usage)
@@ -217,7 +217,8 @@ class LLMClient:
     def summarize_session(self):
         if not self.client or not self.session_raw_history: return
         history_text = "\n".join(self.session_raw_history)
-        prompt = get_summary_prompt(history_text)
+        memories = self.memory_manager.load_long_term_memories()
+        prompt = get_summary_prompt(history_text, memories)
         try:
             completion = self.client.chat.completions.create(
                 model=self.model_name, messages=[{"role": "user", "content": prompt}], temperature=0.5
@@ -297,7 +298,7 @@ class CoderClient:
             completion = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
-                temperature=0.2,
+                temperature=0.5,
             )
             _record_usage(completion.usage)
             
