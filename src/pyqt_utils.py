@@ -2,351 +2,45 @@ import sys
 import os
 import time
 import random
-from PyQt6.QtWidgets import (QApplication, QWidget, QLabel, QMenu, QVBoxLayout, 
-                             QHBoxLayout, QTextEdit, QPushButton, QLineEdit, QFrame, QFormLayout, QMessageBox)
-from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap, QMouseEvent, QAction, QFont, QColor, QPalette
+from PyQt6.QtWidgets import (QApplication, QWidget, QLabel, QMenu, QMessageBox)
+from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QPixmap, QMouseEvent, QAction
 
-# 导入配置
+# 导入
 try:
     from src.parameters import ANIMATION_PATH, ANIMATION_CONFIG
-    from src.vlm_utils import LLMClient, CoderClient 
-    from src.memory_utils import MemoryManager
+    from src.pet_core import PetCore
+    from src.pet_windows import ChatWindow, InitSetupWindow
     from src.coding_utils import CodingWindow 
     from src.settings_ui import SettingsWindow 
 except ImportError:
     from parameters import ANIMATION_PATH, ANIMATION_CONFIG
-    from vlm_utils import LLMClient, CoderClient
-    from memory_utils import MemoryManager
+    from pet_core import PetCore
+    from pet_windows import ChatWindow, InitSetupWindow
     from coding_utils import CodingWindow
     from settings_ui import SettingsWindow
 
-# --- 1. 常规聊天线程 ---
-class ChatWorker(QThread):
-    reply_signal = pyqtSignal(str, dict)
-
-    def __init__(self, client, text, current_stats, persona):
-        super().__init__()
-        self.client = client
-        self.text = text
-        self.stats = current_stats
-        self.persona = persona
-
-    def run(self):
-        if self.client and self.client.is_ready():
-            reply, action = self.client.chat(self.text, self.stats, self.persona)
-            self.reply_signal.emit(reply, action)
-        else:
-            self.reply_signal.emit("请先在设置中配置 API Key 哦！", {})
-
-# --- 2. 主动聊天线程 ---
-class ActiveChatWorker(QThread):
-    reply_signal = pyqtSignal(str, dict)
-
-    def __init__(self, client, current_stats, persona, mode="active"):
-        super().__init__()
-        self.client = client
-        self.stats = current_stats
-        self.persona = persona
-        self.mode = mode # 'active' or 'intro'
-
-    def run(self):
-        if self.client and self.client.is_ready():
-            if self.mode == "intro":
-                reply, action = self.client.get_self_introduction(self.persona)
-            else:
-                reply, action = self.client.initiate_conversation(self.stats, self.persona)
-            
-            if reply: 
-                self.reply_signal.emit(reply, action)
-
-# --- 3. 编程聊天线程 ---
-class CoderWorker(QThread):
-    reply_signal = pyqtSignal(str, dict)
-
-    def __init__(self, client, text, stats, persona):
-        super().__init__()
-        self.client = client
-        self.text = text
-        self.stats = stats
-        self.persona = persona
-
-    def run(self):
-        if self.client and self.client.is_ready():
-            reply, action = self.client.chat(self.text, self.stats, self.persona)
-            self.reply_signal.emit(reply, action)
-
-# --- 聊天窗口 ---
-class ChatWindow(QWidget):
-    def __init__(self, parent_pet):
-        super().__init__()
-        self.pet = parent_pet
-        self.init_ui()
-
-    def init_ui(self):
-        self.setWindowTitle("Chat")
-        self.resize(300, 350)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-        layout = QVBoxLayout()
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        self.container = QFrame()
-        self.container.setObjectName("container")
-        container_layout = QVBoxLayout(self.container)
-        container_layout.setContentsMargins(15, 15, 15, 15)
-
-        style_sheet = """
-            QFrame#container {
-                background-color: rgba(173, 216, 230, 230); 
-                border-radius: 20px;
-                border: 2px solid rgba(255, 255, 255, 100);
-            }
-            QTextEdit {
-                background-color: rgba(255, 255, 255, 150);
-                border: none;
-                border-radius: 10px;
-                font-family: "Microsoft YaHei", sans-serif;
-                font-size: 14px;
-                color: #000000;
-                padding: 10px;
-            }
-            QLineEdit {
-                background-color: rgba(255, 255, 255, 255);
-                border: 2px solid rgba(135, 206, 235, 200);
-                border-radius: 15px;
-                padding: 8px;
-                font-family: "Microsoft YaHei", sans-serif;
-                font-size: 13px;
-                color: #000000;
-            }
-            QPushButton {
-                background-color: #4682B4; 
-                color: white;
-                border-radius: 15px;
-                padding: 8px 15px;
-                font-weight: bold;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QPushButton:hover {
-                background-color: #5F9EA0;
-            }
-            QPushButton:pressed {
-                background-color: #4169E1;
-            }
-        """
-        self.setStyleSheet(style_sheet)
-
-        self.chat_history = QTextEdit()
-        self.chat_history.setReadOnly(True)
-        container_layout.addWidget(self.chat_history)
-
-        input_layout = QHBoxLayout()
-        self.input_field = QLineEdit()
-        self.input_field.setPlaceholderText("和我说说话吧...")
-        self.input_field.returnPressed.connect(self.send_message)
-        
-        self.send_btn = QPushButton("发送")
-        self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_btn.clicked.connect(self.send_message)
-
-        input_layout.addWidget(self.input_field)
-        input_layout.addWidget(self.send_btn)
-        
-        container_layout.addLayout(input_layout)
-        layout.addWidget(self.container)
-        self.setLayout(layout)
-
-    def update_position(self):
-        if self.isVisible():
-            pet_geo = self.pet.geometry()
-            target_x = pet_geo.x() + pet_geo.width() - 50 
-            target_y = pet_geo.y() + 20 
-            self.move(target_x, target_y)
-
-    def send_message(self):
-        text = self.input_field.text().strip()
-        if not text: return
-
-        self.chat_history.append(f"<div style='color:#003366; margin-bottom:5px;'><b>你:</b> {text}</div>")
-        self.input_field.clear()
-        self.chat_history.append("<div style='color:#555555; font-style:italic; font-size:12px;'>正在思考...</div>")
-        sb = self.chat_history.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-        self.pet.start_chat_process(text)
-
-    def receive_reply(self, reply):
-        self.chat_history.append(f"<div style='color:#000000; margin-bottom:10px; margin-top:5px;'><b>桌宠:</b> {reply}</div>")
-        sb = self.chat_history.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-# --- 初始化设置窗口 ---
-class InitSetupWindow(QWidget):
-    submission_signal = pyqtSignal(dict)
-
-    def __init__(self, parent_pet):
-        super().__init__()
-        self.pet = parent_pet
-        self.init_ui()
-
-    def init_ui(self):
-        self.setWindowTitle("初次见面 - 信息登记")
-        # 移除固定 Resize，改为 adjustSize，解决 setGeometry 警告
-        # self.resize(300, 320) 
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-
-        # 样式
-        self.setStyleSheet("""
-            QWidget#main_frame {
-                background-color: rgba(255, 250, 240, 240); 
-                border-radius: 15px;
-                border: 2px solid #FFD700;
-            }
-            QLabel {
-                font-family: "Microsoft YaHei";
-                color: #555;
-                font-size: 13px;
-                font-weight: bold;
-            }
-            QLabel#title {
-                font-size: 16px;
-                color: #FF8C00;
-                margin-bottom: 10px;
-            }
-            QLineEdit {
-                border: 1px solid #FFD700;
-                border-radius: 5px;
-                padding: 5px;
-                background-color: white;
-                color: #333;
-            }
-            QPushButton {
-                background-color: #FF8C00; 
-                color: white;
-                border-radius: 15px;
-                padding: 8px;
-                font-weight: bold;
-                font-family: "Microsoft YaHei";
-            }
-            QPushButton:hover { background-color: #FFA500; }
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        self.frame = QFrame()
-        self.frame.setObjectName("main_frame")
-        frame_layout = QVBoxLayout(self.frame)
-        frame_layout.setContentsMargins(20, 20, 20, 20)
-
-        # 标题
-        title = QLabel("✨ 初次见面请多关照 ✨")
-        title.setObjectName("title")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        frame_layout.addWidget(title)
-        
-        desc = QLabel("为了更好地陪伴你，请告诉我关于你的一些信息吧！")
-        desc.setWordWrap(True)
-        desc.setStyleSheet("font-weight: normal; font-size: 12px; margin-bottom: 10px;")
-        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        frame_layout.addWidget(desc)
-
-        # 表单
-        form_layout = QFormLayout()
-        form_layout.setSpacing(10)
-
-        self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("例如：Master, 哥哥, 姐姐...")
-        form_layout.addRow("我该怎么称呼你？", self.name_edit)
-
-        self.birth_edit = QLineEdit()
-        self.birth_edit.setPlaceholderText("例如：1月1日")
-        form_layout.addRow("你的生日是哪天？", self.birth_edit)
-
-        self.job_edit = QLineEdit()
-        self.job_edit.setPlaceholderText("例如：学生, 程序员, 设计师...")
-        form_layout.addRow("你是做什么的？", self.job_edit)
-
-        self.hobby_edit = QLineEdit()
-        self.hobby_edit.setPlaceholderText("例如：打游戏, 画画, 发呆...")
-        form_layout.addRow("有什么喜欢的事？", self.hobby_edit)
-
-        frame_layout.addLayout(form_layout)
-
-        # 提交按钮
-        self.submit_btn = QPushButton("提交信息 (Submit)")
-        self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_btn.clicked.connect(self.submit_info)
-        frame_layout.addWidget(self.submit_btn)
-        
-        # 增加拉伸因子，保持美观
-        frame_layout.addStretch()
-
-        layout.addWidget(self.frame)
-        
-        # 自适应大小
-        self.adjustSize()
-
-    def submit_info(self):
-        data = {
-            "称呼": self.name_edit.text().strip(),
-            "生日": self.birth_edit.text().strip(),
-            "职业": self.job_edit.text().strip(),
-            "爱好": self.hobby_edit.text().strip()
-        }
-        self.submission_signal.emit(data)
-        self.close() # 移除 self.close()，使用 self.hide() 防止退出问题
-        self.hide()
-
-    def update_position(self):
-        if self.isVisible() and self.pet:
-            pet_geo = self.pet.geometry()
-            # 确保计算结果为整数
-            target_x = int(pet_geo.x() + (pet_geo.width() - self.width()) // 2)
-            target_y = int(pet_geo.y() - self.height() - 20)
-            
-            # 防止超出屏幕顶部
-            if target_y < 0: 
-                target_y = int(pet_geo.y() + pet_geo.height() + 20)
-                
-            self.move(target_x, target_y)
-
-# --- 桌面宠物主类 ---
 class DesktopPet(QWidget):
-    def __init__(self, image_path=None, target_size=(320, 320), parent=None):
+    def __init__(self, target_size=(320, 320), parent=None):
         super().__init__(parent)
         
-        self.llm_client = LLMClient()
-        self.coder_client = CoderClient() 
-        self.memory_manager = MemoryManager()
-
-        # 1. 加载设置
-        self.settings = self.memory_manager.load_settings()
-        self.target_size = tuple(self.settings.get("pet_size", [320, 320]))
-
-        # 2. 状态初始化
-        default_stats = {
-            "hunger": 0, "thirst": 0, "fatigue": 0, 
-            "boredom": 0, "intimacy": 0, "capability": 0, "mood": 50
-        }
-        saved_stats = self.memory_manager.load_status()
-        if saved_stats:
-            self.stats = saved_stats
-            print("Loaded saved stats:", self.stats)
-        else:
-            self.stats = default_stats
-            print("Using default stats")
-
-        self.current_role_state = "idle" 
-        self.current_direction = "right" 
-        self.tick_counter = 0            
-
-        # 触摸统计 [timestamp1, timestamp2, ...]
-        self.touch_history = []
-
+        # 1. 初始化核心逻辑 (Model/Controller)
+        self.core = PetCore()
+        
+        # 2. 连接 Core 信号
+        self.core.stats_changed.connect(self.on_stats_changed)
+        self.core.animation_requested.connect(self.play_animation)
+        self.core.chat_reply_received.connect(self.on_chat_reply)
+        self.core.show_chat_window_signal.connect(self.show_chat_window)
+        self.core.show_init_window_signal.connect(self.show_init_window)
+        self.core.ready_to_exit_signal.connect(self.force_quit) # 新增：彻底退出
+        
+        # 3. UI 初始化
+        self.target_size = tuple(self.core.settings.get("pet_size", target_size))
+        self.current_direction = "right"
+        self.init_ui()
+        
+        # 4. 动画状态
         self.current_frames = []      
         self.current_frame_index = 0  
         self.current_config = {}      
@@ -355,486 +49,93 @@ class DesktopPet(QWidget):
         
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self._update_frame)
-
-        self.logic_timer = QTimer(self)
-        self.logic_timer.timeout.connect(self._update_stats_logic)
-        self.logic_timer.start(1000) 
-
-        # 拖拽/点击 区分逻辑
+        
+        # 5. 交互状态
         self.is_dragging = False
-        self.is_potential_drag = False # 新增：潜在拖拽状态
+        self.is_potential_drag = False
         self.press_start_pos = QPoint()
         self.drag_offset = QPoint()
-        
         self.pos_anim = QPropertyAnimation(self, b"pos")
+        
+        # [新增] 触摸连击检测
+        self.click_count = 0
+        self.click_timer = QTimer(self)
+        self.click_timer.setSingleShot(True)
+        self.click_timer.setInterval(300) # 300ms 连击判定窗口
+        self.click_timer.timeout.connect(self._on_click_timer_timeout)
+        self.last_click_pos = QPoint()
 
+        # 6. 子窗口
         self.chat_window = None 
         self.coding_window = None 
         self.settings_window = None
         self.init_setup_window = None
         
-        self.active_chat_worker = None 
-        self.chat_worker = None
+        # 7. 退出标志位
+        self.is_exiting = False
 
-        self.init_ui()
+        # 启动默认动画
         self.play_idle_animation()
-
-        # 延迟检查是否需要初次见面初始化 (1.5秒后)
-        QTimer.singleShot(1500, self.check_first_encounter)
+        
+        # 自主行走逻辑 (View层)
+        self.walk_check_timer = QTimer(self)
+        self.walk_check_timer.timeout.connect(self._check_view_autonomous_behavior)
+        self.walk_check_timer.start(1000)
 
     def init_ui(self):
-        # 关键修复：防止关闭子窗口（如MessageBox）导致主程序退出
         QApplication.instance().setQuitOnLastWindowClosed(False)
-
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Tool
-        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.label = QLabel(self)
         self.move(200, 200)
 
-    # --- 初次见面逻辑 ---
-    def check_first_encounter(self):
-        """检查记忆，如果是空白状态则触发初始化流程"""
-        if self.memory_manager.is_fresh_start():
-            # 关键修改：先检查 API 是否就绪
-            if self.llm_client.is_ready():
-                print("检测到初次见面且API已配置，启动初始化流程...")
-                self.start_init_process()
-            else:
-                print("检测到初次见面，但 API 未配置。等待用户配置...")
-                # 可以在这里主动弹出设置窗口，引导用户
-                self.open_settings_window()
-                # 关键修复：指定 settings_window 为父窗口，解决遮挡问题
-                QMessageBox.information(self.settings_window, "欢迎", "你好呀！初次见面，请先在设置中配置你的 API Key，让我能听懂你的话哦！")
+    # --- 信号响应槽 ---
+    def on_stats_changed(self, new_stats):
+        pass
 
-    def start_init_process(self):
-        """执行初始化流程：LLM自我介绍 + 弹出设置窗口"""
-        # 1. 触发 LLM 自我介绍
-        self.current_role_state = "talking"
-        self.play_animation(ANIMATION_PATH.ACTION_CONT_TALK, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        
-        persona = self.settings.get("persona", "")
-        # 使用 ActiveChatWorker 但模式为 'intro'
-        self.active_chat_worker = ActiveChatWorker(self.llm_client, self.stats, persona, mode="intro")
-        self.active_chat_worker.reply_signal.connect(self.finish_init_chat_process)
-        self.active_chat_worker.start()
+    def on_chat_reply(self, reply):
+        if self.chat_window:
+            self.chat_window.receive_reply(reply)
 
-    def finish_init_chat_process(self, reply, action_data):
-        # 显示聊天窗口
+    def _ensure_chat_window_created(self):
         if self.chat_window is None:
-            self.chat_window = ChatWindow(self)
+            self.chat_window = ChatWindow(self, self.core)
+
+    def show_chat_window(self):
+        self._ensure_chat_window_created()
         if not self.chat_window.isVisible():
             self.chat_window.show()
             self.chat_window.update_position()
             self.chat_window.raise_()
-        self.chat_window.receive_reply(reply)
-        
-        self.current_role_state = "idle"
-        self.play_idle_animation()
 
-        # 2. 弹出信息登记窗口
+    def show_init_window(self):
         if self.init_setup_window is None:
             self.init_setup_window = InitSetupWindow(self)
-            self.init_setup_window.submission_signal.connect(self.handle_init_submission)
-        
+            self.init_setup_window.submission_signal.connect(self.core.handle_init_submission)
         self.init_setup_window.show()
         self.init_setup_window.update_position()
         self.init_setup_window.raise_()
 
-    def handle_init_submission(self, data):
-        """处理初始化窗口提交的数据"""
-        print(f"收到初始化数据: {data}")
-        
-        # 存入记忆
-        added_info = []
-        if data["称呼"]:
-            info = f"用户希望被称呼为：{data['称呼']}"
-            self.memory_manager.add_memory(info)
-            added_info.append(f"称呼({data['称呼']})")
-        
-        if data["生日"]:
-            info = f"用户的生日是：{data['生日']}"
-            self.memory_manager.add_memory(info)
-            added_info.append(f"生日({data['生日']})")
-            
-        if data["职业"]:
-            info = f"用户的职业是：{data['职业']}"
-            self.memory_manager.add_memory(info)
-            added_info.append(f"职业({data['职业']})")
-            
-        if data["爱好"]:
-            info = f"用户的爱好是：{data['爱好']}"
-            self.memory_manager.add_memory(info)
-            added_info.append(f"爱好({data['爱好']})")
+    def force_quit(self):
+        """Core 通知可以彻底关闭了"""
+        self.is_exiting = True # 跳过拦截
+        self.close()
 
-        # 触发一次简单的回应，表示记住了
-        if added_info:
-            response_prompt = f"用户刚刚填写了个人信息卡：{', '.join(added_info)}。请用开心的语气表示你记住了这些信息，并再次向用户问好。"
-            self.start_chat_process(response_prompt)
-
-    # --- 鼠标与触摸逻辑核心 ---
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            # 记录初始按下位置，用于判断是否移动了足够距离成为拖拽
-            self.press_start_pos = event.globalPosition().toPoint()
-            self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            
-            self.is_potential_drag = True  # 标记可能开始拖拽
-            self.is_dragging = False       # 尚未确认为拖拽
-            
-            # 停止任何正在进行的物理掉落动画
-            if self.pos_anim.state() == QPropertyAnimation.State.Running:
-                self.pos_anim.stop()
-            
-            event.accept()
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            current_pos = event.globalPosition().toPoint()
-            
-            # 检查移动距离是否超过阈值 (例如 5px)
-            if self.is_potential_drag and (current_pos - self.press_start_pos).manhattanLength() > 5:
-                self.is_dragging = True
-                self.is_potential_drag = False # 确认为拖拽，不再是潜在状态
-                # 开始播放拖拽动画
-                self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_DRAG, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT)
-            
-            if self.is_dragging:
-                # 执行拖拽移动
-                new_pos = current_pos - self.drag_offset
-                self.move(new_pos)
-            
-            event.accept()
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self.is_dragging:
-                # 拖拽结束：执行掉落逻辑
-                self.is_dragging = False
-                self._handle_drop()
-            elif self.is_potential_drag:
-                # 未触发拖拽：认定为点击/触摸
-                self.is_potential_drag = False
-                # 传入相对于窗口的坐标进行判定
-                self.handle_touch(event.position())
-            
-            event.accept()
-
-    def _handle_drop(self):
-        """处理拖拽释放后的掉落"""
-        screen_geo = self.screen().geometry()
-        screen_height = screen_geo.height()
-        current_y = self.y()
-        drop_percentage = random.uniform(0.10, 0.20)
-        drop_distance = int(screen_height * drop_percentage)
-        max_y = screen_height - self.height() - 60
-        target_y = min(current_y + drop_distance, max_y)
-        if target_y - current_y < 10:
-            self._on_drop_finished()
-            return
-        self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_FALL, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT, clear_queue=True)
-        self.pos_anim.setDuration(500)
-        self.pos_anim.setStartValue(self.pos())
-        self.pos_anim.setEndValue(QPoint(self.x(), target_y))
-        self.pos_anim.setEasingCurve(QEasingCurve.Type.OutBounce)
-        try: self.pos_anim.finished.disconnect()
-        except TypeError: pass
-        self.pos_anim.finished.connect(self._on_drop_finished)
-        self.pos_anim.start()
-
-    def handle_touch(self, local_pos):
-        """处理触摸逻辑"""
-        # 防堆积逻辑
-        if self.current_role_state == "talking":
-            print("Ignored touch: Pet is busy.")
-            return
-
-        # 1. 细化区域判定
-        # 获取点击位置在 Widget 中的相对坐标比例 (0.0 - 1.0)
-        x_ratio = local_pos.x() / self.width()
-        y_ratio = local_pos.y() / self.height()
-        
-        part = "身体" # 默认兜底
-
-        # 纵向判定优先
-        if y_ratio < 0.35:
-            part = "脑袋"
-        elif y_ratio < 0.7:
-            # 胸部和肚子区域，检查左右是否为手
-            # 假设手在身体两侧，占比左右各 25%
-            if x_ratio < 0.2 or x_ratio > 0.8:
-                part = "手"
-            elif y_ratio < 0.55:
-                part = "胸"
-            else:
-                part = "肚子"
-        elif y_ratio < 0.85:
-            part = "大腿"
-        else:
-            part = "脚"
-        
-        # 2. 更新滑动计数器
-        current_time = time.time()
-        self.touch_history.append(current_time)
-        # 清理 60秒前的数据
-        self.touch_history = [t for t in self.touch_history if current_time - t <= 60]
-        touch_count = len(self.touch_history)
-        
-        print(f"Touched {part} (x={x_ratio:.2f}, y={y_ratio:.2f}). Count in last min: {touch_count}")
-
-        # 3. 根据设置决定行为
-        smart_touch = self.settings.get("smart_touch", True)
-        
-        if smart_touch:
-            # 智能互动：发送 Prompt 给 LLM
-            prompt_text = f"*用户刚才触摸了你的{part}。这是一分钟内用户第{touch_count}次触摸你。*"
-            # 使用专用流程，强制弹出窗口
-            self.start_touch_chat_process(prompt_text)
-        else:
-            # 普通互动：直接播放动画和数值反馈
-            if part == "脑袋":
-                # 摸头: 享受/开心
-                self.play_animation(ANIMATION_PATH.EMOTION_SING_ENJOY, ANIMATION_CONFIG.CONFIG_EMOTION_SING)
-                if touch_count < 3: self.stats["mood"] = min(100, self.stats["mood"] + 0.1)
-            elif part == "胸":
-                # 摸胸: 害羞
-                self.play_animation(ANIMATION_PATH.EMOTION_SING_BLUSH, ANIMATION_CONFIG.CONFIG_EMOTION_SING)
-                if touch_count < 3: self.stats["mood"] = min(100, self.stats["intimacy"] - 0.1)
-            elif part == "肚子":
-                # 摸肚子: 开心
-                self.play_animation(ANIMATION_PATH.EMOTION_SING_HAPPY, ANIMATION_CONFIG.CONFIG_EMOTION_SING)
-                if touch_count < 3: self.stats["mood"] = min(100, self.stats["mood"] + 0.1)
-            elif part == "手":
-                # 牵手: 开心
-                self.play_animation(ANIMATION_PATH.EMOTION_SING_HAPPY, ANIMATION_CONFIG.CONFIG_EMOTION_SING)
-            elif part in ["大腿", "脚"]:
-                # 摸腿/脚: 生气或不适
-                self.play_animation(ANIMATION_PATH.EMOTION_SING_ANGRY, ANIMATION_CONFIG.CONFIG_EMOTION_SING)
-                if touch_count < 3: self.stats["mood"] = max(0, self.stats["mood"] - 0.2)
-            
-            # 标记状态为 emotion (短暂展示后回 idle)
-            self.current_role_state = "emotion"
-
-    def start_touch_chat_process(self, text):
-        """智能触摸互动专用流程"""
-        print("DEBUG: Triggering Smart Touch Chat...")
-        self.current_role_state = "talking"
-        self.play_animation(ANIMATION_PATH.ACTION_CONT_TALK, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        
-        persona = self.settings.get("persona", "")
-        # 复用 ChatWorker
-        self.chat_worker = ChatWorker(self.llm_client, text, self.stats, persona)
-        self.chat_worker.reply_signal.connect(self.finish_touch_chat_process)
-        self.chat_worker.start()
-
-    def finish_touch_chat_process(self, reply, action_data):
-        """触摸互动的回调：强制显示窗口"""
-        if self.chat_window is None:
-            self.chat_window = ChatWindow(self)
-        
-        # 强制显示并置顶
-        if not self.chat_window.isVisible():
-            self.chat_window.show()
-            self.chat_window.update_position()
-            self.chat_window.raise_()
-        
-        # 显示回复
-        self.chat_window.receive_reply(reply)
-        
-        # 复用通用的完成逻辑来处理动作（但不重复显示文本）
-        self.finish_chat_process(None, action_data)
-
-    # --- 设置窗口逻辑 ---
-    def open_settings_window(self):
-        if self.settings_window is None:
-            self.settings_window = SettingsWindow(self.settings, self)
-            self.settings_window.settings_saved.connect(self.apply_settings)
-        self.settings_window.show()
-        self.settings_window.update_position() 
-        self.settings_window.raise_()
-        self.settings_window.activateWindow()
-
-    def apply_settings(self, new_settings):
-        print("Applying new settings:", new_settings)
-        self.settings = new_settings
-        self.memory_manager.save_settings(new_settings)
-        
-        # 核心：更新 LLM 客户端的配置
-        self.llm_client.update_config(new_settings)
-        self.coder_client.update_config(new_settings)
-        
-        new_size = tuple(new_settings.get("pet_size", [320, 320]))
-        if new_size != self.target_size:
-            self.target_size = new_size
-            if self.current_frames:
-                self._render_image(self.current_frames[self.current_frame_index % len(self.current_frames)])
-
-        # 【核心修改】：应用设置后，再次检查是否满足初次见面条件
-        # 这样用户填完 API Key 并保存后，就会立即触发初始化流程
-        self.check_first_encounter()
-
-    def moveEvent(self, event):
-        super().moveEvent(event)
-        if self.chat_window and self.chat_window.isVisible():
-            self.chat_window.update_position()
-        if self.settings_window and self.settings_window.isVisible():
-            self.settings_window.update_position()
-        if self.init_setup_window and self.init_setup_window.isVisible():
-            self.init_setup_window.update_position()
-
-    def closeEvent(self, event):
-        print("正在退出程序...")
-        if self.logic_timer.isActive(): self.logic_timer.stop()
-        if self.anim_timer.isActive(): self.anim_timer.stop()
-        if self.pos_anim.state() == QPropertyAnimation.State.Running: self.pos_anim.stop()
-
-        if self.active_chat_worker and self.active_chat_worker.isRunning():
-            self.active_chat_worker.terminate()
-            self.active_chat_worker.wait()
-        
-        if self.chat_worker and self.chat_worker.isRunning():
-            self.chat_worker.terminate()
-            self.chat_worker.wait()
-
-        self.hide()
-        if self.chat_window: self.chat_window.hide()
-        if self.coding_window: self.coding_window.hide()
-        if self.settings_window: self.settings_window.hide()
-        if self.init_setup_window: self.init_setup_window.hide()
-        
-        QApplication.processEvents()
-
-        print("正在后台保存数据...")
-        try:
-            self.memory_manager.save_status(self.stats)
-            if self.llm_client:
-                print("正在整理记忆 (这可能需要几秒钟)...")
-                self.llm_client.summarize_session()
-        except Exception as e:
-            print(f"Error saving memories on exit: {e}")
-
-        print("再见！")
-        event.accept()
-        sys.exit(0)
-
-    def _update_stats_logic(self):
-        if not self.isVisible(): return
-        state = self.current_role_state
-        self.tick_counter += 1
-
-        if state == "work":
-            self.stats["capability"] = min(40, self.stats["capability"] + 0.01)
-            self.stats["fatigue"] = min(100, self.stats["fatigue"] + 0.2)
-            self.stats["boredom"] = min(100, self.stats["boredom"] + 0.2)
-        elif state == "code":
-            self.stats["capability"] = min(60, self.stats["capability"] + 0.02)
-            self.stats["fatigue"] = min(100, self.stats["fatigue"] + 0.4)
-            self.stats["boredom"] = max(0, self.stats["boredom"] - 0.05)
-        elif state == "sleep":
-            self.stats["fatigue"] = max(0, self.stats["fatigue"] - 2.0)
-        elif state == "play":
-            self.stats["boredom"] = max(0, self.stats["boredom"] - 2.0)
-            self.stats["fatigue"] = min(100, self.stats["fatigue"] + 0.2)
-            self.stats["mood"] = min(100, self.stats["mood"] + 0.1)
-        
-        if state != "sleep":
-            self.stats["hunger"] = min(100, self.stats["hunger"] + 0.01)
-            self.stats["thirst"] = min(100, self.stats["thirst"] + 0.01)
-
-        if state == "idle":
-            active_chat_interval = self.settings.get("active_chat_interval", 60)
-            active_chat_prob = self.settings.get("active_chat_probability", 0.2)
-            
-            if self.tick_counter % active_chat_interval == 0:
-                if random.random() < active_chat_prob:
-                    self.start_active_chat_process()
-                    return 
-
-            action_prob = self.settings.get("action_probability", 0.02)
-            if random.random() < action_prob:
-                self.start_autonomous_walk()
-            
-            elif self.tick_counter % 60 == 0:
-                if self.stats['boredom'] > 50 or self.stats['fatigue'] > 50:
-                    if random.random() < 0.1:
-                        if self.stats['fatigue'] > self.stats['boredom']:
-                            self.interact("sleep")
-                        else:
-                            self.interact("play")
-            elif self.tick_counter % 15 == 0:
-                new_direction = random.choice(["left", "right"])
-                if new_direction != self.current_direction:
-                    self.current_direction = new_direction
-                    self.play_idle_animation()
-
-    def start_active_chat_process(self):
-        print("DEBUG: Triggering Active Chat...")
-        self.current_role_state = "talking"
-        self.play_animation(ANIMATION_PATH.ACTION_CONT_TALK, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        
-        persona = self.settings.get("persona", "")
-        self.active_chat_worker = ActiveChatWorker(self.llm_client, self.stats, persona)
-        self.active_chat_worker.reply_signal.connect(self.finish_active_chat_process)
-        self.active_chat_worker.start()
-
-    def finish_active_chat_process(self, reply, action_data):
-        if self.chat_window is None:
-            self.chat_window = ChatWindow(self)
-        if not self.chat_window.isVisible():
-            self.chat_window.show()
-            self.chat_window.update_position()
-            self.chat_window.raise_()
-        self.chat_window.receive_reply(reply)
-        self.finish_chat_process(None, action_data)
-
-    def start_autonomous_walk(self):
-        self.current_role_state = "walking"
-        distance = random.randint(50, 150)
-        screen_geo = self.screen().geometry()
-        current_x = self.x()
-        target_x = current_x
-        if self.current_direction == "left":
-            target_x = max(0, current_x - distance)
-            self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_LEFT, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT)
-        else:
-            target_x = min(screen_geo.width() - self.width(), current_x + distance)
-            self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_RIGHT, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT)
-        actual_distance = abs(target_x - current_x)
-        if actual_distance < 5:
-            self.current_role_state = "idle"
-            self.play_idle_animation()
-            return
-        self.pos_anim.setDuration(int(actual_distance * 10)) 
-        self.pos_anim.setStartValue(self.pos())
-        self.pos_anim.setEndValue(QPoint(target_x, self.y()))
-        self.pos_anim.setEasingCurve(QEasingCurve.Type.Linear)
-        try: self.pos_anim.finished.disconnect()
-        except TypeError: pass
-        self.pos_anim.finished.connect(self._on_walk_finished)
-        self.pos_anim.start()
-
-    def _on_walk_finished(self):
-        if self.current_role_state == "walking":
-            self.current_role_state = "idle"
-            self.play_idle_animation()
-
-    def play_idle_animation(self):
-        if self.current_direction == "left":
-            self.play_animation(ANIMATION_PATH.BASIC_CONT_LEFT, ANIMATION_CONFIG.CONFIG_BASIC_CONT)
-        else:
-            self.play_animation(ANIMATION_PATH.BASIC_CONT_RIGHT, ANIMATION_CONFIG.CONFIG_BASIC_CONT)
-
+    # --- 动画逻辑 ---
     def play_animation(self, image_paths, config, next_anim=None, clear_queue=True):
+        if not image_paths and not clear_queue:
+             self.play_idle_animation()
+             return
+
         if clear_queue: self.anim_queue = []
         if next_anim: self.anim_queue.append(next_anim)
         if not image_paths: return
+        
         self.current_frames = image_paths
         self.current_config = config
         self.current_frame_index = 0
         self.anim_start_time = time.time()
+        
         fps = config.get("fps", 5.0)
         interval = int(1000 / fps) if fps > 0 else 1000
         self.anim_timer.start(interval)
@@ -846,8 +147,10 @@ class DesktopPet(QWidget):
         if idx >= len(self.current_frames):
             if self.current_config.get("loop", False): idx = idx % len(self.current_frames)
             else: idx = len(self.current_frames) - 1
+        
         path = self.current_frames[idx]
         self._render_image(path)
+        
         is_sing = not self.current_config.get("loop", False)
         if is_sing:
             duration = self.current_config.get("duration", 2.0)
@@ -862,8 +165,13 @@ class DesktopPet(QWidget):
             next_paths, next_conf = self.anim_queue.pop(0)
             self.play_animation(next_paths, next_conf, clear_queue=False)
         else:
-            self.current_role_state = "idle"
             self.play_idle_animation()
+
+    def play_idle_animation(self):
+        if self.current_direction == "left":
+            self.play_animation(ANIMATION_PATH.BASIC_CONT_LEFT, ANIMATION_CONFIG.CONFIG_BASIC_CONT)
+        else:
+            self.play_animation(ANIMATION_PATH.BASIC_CONT_RIGHT, ANIMATION_CONFIG.CONFIG_BASIC_CONT)
 
     def _render_image(self, path):
         if not os.path.exists(path): path = os.path.join(os.getcwd(), path)
@@ -876,151 +184,211 @@ class DesktopPet(QWidget):
                 self.resize(pixmap.width(), pixmap.height())
                 self.label.resize(pixmap.width(), pixmap.height())
 
-    def toggle_chat_window(self):
-        if self.chat_window is None: self.chat_window = ChatWindow(self)
-        if self.chat_window.isVisible(): self.chat_window.hide()
+    # --- 输入事件 ---
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.press_start_pos = event.globalPosition().toPoint()
+            self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.is_potential_drag = True
+            self.is_dragging = False
+            if self.pos_anim.state() == QPropertyAnimation.State.Running:
+                self.pos_anim.stop()
+            event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            current_pos = event.globalPosition().toPoint()
+            if self.is_potential_drag and (current_pos - self.press_start_pos).manhattanLength() > 5:
+                self.is_dragging = True
+                self.is_potential_drag = False
+                self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_DRAG, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT)
+            if self.is_dragging:
+                self.move(current_pos - self.drag_offset)
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.is_dragging:
+                self.is_dragging = False
+                self._handle_drop()
+            elif self.is_potential_drag:
+                self.is_potential_drag = False
+                # [核心修改] 启动/累加 连击定时器
+                self.click_count += 1
+                self.last_click_pos = event.position() # 记录最后点击位置
+                # 重新启动定时器 (重置倒计时)
+                self.click_timer.start()
+                
+            event.accept()
+
+    def _on_click_timer_timeout(self):
+        """连击判定结束，执行逻辑"""
+        count = self.click_count
+        self.click_count = 0 # 重置
+        
+        if count == 0: return
+        
+        # 传递给 touch handler
+        self.handle_touch(self.last_click_pos, count)
+
+    def handle_touch(self, local_pos, click_count_now):
+        if self.core.current_role_state == "talking": return
+
+        x_ratio = local_pos.x() / self.width()
+        y_ratio = local_pos.y() / self.height()
+        
+        part = "身体"
+        if y_ratio < 0.35: part = "脑袋"
+        elif y_ratio < 0.7:
+            if x_ratio < 0.35 or x_ratio > 0.65: part = "手" # 调整手判定范围
+            elif y_ratio < 0.55: part = "胸"
+            else: part = "肚子"
+        elif y_ratio < 0.85: part = "大腿"
+        else: part = "脚"
+        
+        # 判定触摸类型
+        touch_type = "gentle"
+        if click_count_now == 2:
+            touch_type = "stroke"
+        elif click_count_now >= 3:
+            touch_type = "pat"
+            
+        print(f"Touch: {part}, Count: {click_count_now}, Type: {touch_type}")
+        
+        # 调用核心逻辑处理
+        self.core.process_touch(part, touch_type)
+
+    def _handle_drop(self):
+        screen_height = self.screen().geometry().height()
+        current_y = self.y()
+        drop_distance = int(screen_height * random.uniform(0.1, 0.2))
+        max_y = screen_height - self.height() - 60
+        target_y = min(current_y + drop_distance, max_y)
+        
+        if target_y - current_y < 10:
+            self._on_drop_finished()
+            return
+
+        self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_FALL, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT, clear_queue=True)
+        self.pos_anim.setDuration(500)
+        self.pos_anim.setStartValue(self.pos())
+        self.pos_anim.setEndValue(QPoint(self.x(), target_y))
+        self.pos_anim.setEasingCurve(QEasingCurve.Type.OutBounce)
+        try: self.pos_anim.finished.disconnect()
+        except TypeError: pass
+        self.pos_anim.finished.connect(self._on_drop_finished)
+        self.pos_anim.start()
+
+    def _on_drop_finished(self):
+        anim_stand = (ANIMATION_PATH.MOVEMENT_SING_STAND, ANIMATION_CONFIG.CONFIG_MOVEMENT_SING)
+        self.play_animation(ANIMATION_PATH.MOVEMENT_SING_LAND, ANIMATION_CONFIG.CONFIG_MOVEMENT_SING, next_anim=anim_stand)
+
+    # --- 自主行为 View 实现 ---
+    def _check_view_autonomous_behavior(self):
+        if self.core.current_role_state == "idle":
+             action_prob = self.core.settings.get("action_probability", 0.02)
+             if random.random() < action_prob:
+                 self.start_autonomous_walk()
+
+    def start_autonomous_walk(self):
+        self.core.current_role_state = "walking"
+        distance = random.randint(50, 150)
+        screen_geo = self.screen().geometry()
+        current_x = self.x()
+        
+        if self.current_direction == "left":
+            target_x = max(0, current_x - distance)
+            self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_LEFT, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT)
         else:
+            target_x = min(screen_geo.width() - self.width(), current_x + distance)
+            self.play_animation(ANIMATION_PATH.MOVEMENT_CONT_RIGHT, ANIMATION_CONFIG.CONFIG_MOVEMENT_CONT)
+            
+        actual_distance = abs(target_x - current_x)
+        if actual_distance < 5:
+            self.core.current_role_state = "idle"
+            self.play_idle_animation()
+            return
+
+        self.pos_anim.setDuration(int(actual_distance * 10))
+        self.pos_anim.setStartValue(self.pos())
+        self.pos_anim.setEndValue(QPoint(target_x, self.y()))
+        self.pos_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        try: self.pos_anim.finished.disconnect()
+        except TypeError: pass
+        self.pos_anim.finished.connect(self._on_walk_finished)
+        self.pos_anim.start()
+
+    def _on_walk_finished(self):
+        self.core.current_role_state = "idle"
+        self.play_idle_animation()
+
+    # --- 窗口管理 ---
+    def toggle_chat_window(self):
+        self._ensure_chat_window_created()
+        if self.chat_window.isVisible():
+            self.chat_window.hide()
+        else: 
             self.chat_window.show()
             self.chat_window.update_position()
             self.chat_window.raise_()
             self.chat_window.activateWindow()
 
-    def start_chat_process(self, text):
-        self.current_role_state = "talking"
-        self.play_animation(ANIMATION_PATH.ACTION_CONT_TALK, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        
-        persona = self.settings.get("persona", "")
-        self.chat_worker = ChatWorker(self.llm_client, text, self.stats, persona)
-        self.chat_worker.reply_signal.connect(self.finish_chat_process)
-        self.chat_worker.start()
-
-    def finish_chat_process(self, reply, action_data):
-        if reply and self.chat_window:
-            self.chat_window.receive_reply(reply)
-        if action_data:
-            print(f"Executing LLM Action: {action_data}")
-            if "adjust" in action_data:
-                for key, val in action_data["adjust"].items():
-                    if key in self.stats:
-                        self.stats[key] = max(0, min(100, self.stats[key] + val))
-            if "animate" in action_data:
-                anim_key = action_data["animate"]
-                if hasattr(ANIMATION_PATH, anim_key):
-                    paths = getattr(ANIMATION_PATH, anim_key)
-                    config = ANIMATION_CONFIG.CONFIG_EMOTION_SING
-                    self.current_role_state = "emotion"
-                    self.play_animation(paths, config)
-                    return 
-            if "update_relationship" in action_data: 
-                print(f"Relationship Updated via Action: {action_data['update_relationship']}")
-
-        self.current_role_state = "idle"
-        self.play_idle_animation()
+    def open_settings_window(self):
+        if self.settings_window is None:
+            self.settings_window = SettingsWindow(self.core.settings, self)
+            self.settings_window.settings_saved.connect(self.core.reload_settings)
+        self.settings_window.show()
+        self.settings_window.update_position()
+        self.settings_window.raise_()
 
     def open_coding_window(self):
         if self.coding_window is None:
-            self.coding_window = CodingWindow(self.coder_client, lambda: self.stats)
-            self.coding_window.get_persona = lambda: self.settings.get("persona", "")
-            self.coding_window.action_signal.connect(self.handle_coding_action)
-            
+            self.coding_window = CodingWindow(self.core.coder_client, lambda: self.core.stats)
+            self.coding_window.get_persona = lambda: self.core.settings.get("persona", "")
+            self.coding_window.action_signal.connect(self.core.process_llm_action)
+        
         if not self.coding_window.isVisible():
             self.coding_window.start_session()
-            print("Entering Coding Mode...")
-            self.current_role_state = "code"
-            self.play_animation(ANIMATION_PATH.ACTION_CONT_CODE, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
+            self.core.interact("code")
         else:
             self.coding_window.raise_()
-            self.coding_window.activateWindow()
 
-    def handle_coding_action(self, action_data):
-        if "animate" in action_data:
-            anim_key = action_data["animate"]
-            if hasattr(ANIMATION_PATH, anim_key):
-                paths = getattr(ANIMATION_PATH, anim_key)
-                if "SING" in anim_key:
-                    config = ANIMATION_CONFIG.CONFIG_EMOTION_SING
-                    self.current_role_state = "emotion" 
-                else:
-                    config = ANIMATION_CONFIG.CONFIG_ACTION_CONT
-                    self.current_role_state = "code"
-                self.play_animation(paths, config)
-
+    # --- 上下文菜单 ---
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        s = self.stats
+        s = self.core.stats
         status_text = f"饿{int(s['hunger'])} 渴{int(s['thirst'])} 累{int(s['fatigue'])} 能{int(s['capability'])}"
-        status_action = QAction(status_text, self)
-        status_action.setEnabled(False)
-        menu.addAction(status_action)
+        menu.addAction(status_text).setEnabled(False)
         menu.addSeparator()
 
-        action_chat = QAction("对话开关 (Chat)", self)
-        action_chat.triggered.connect(self.toggle_chat_window)
-        menu.addAction(action_chat)
-        
-        action_code_mode = QAction("编程模式 (Coding Mode)", self)
-        action_code_mode.triggered.connect(self.open_coding_window)
-        menu.addAction(action_code_mode)
-        
-        action_settings = QAction("系统设置 (Settings)", self)
-        action_settings.triggered.connect(self.open_settings_window)
-        menu.addAction(action_settings)
-
+        menu.addAction("对话开关 (Chat)", self.toggle_chat_window)
+        menu.addAction("编程模式 (Coding)", self.open_coding_window)
+        menu.addAction("系统设置 (Settings)", self.open_settings_window)
         menu.addSeparator()
 
-        actions = [
-            ("投喂零食 (Eat)", "eat"),
-            ("给水喝 (Drink)", "drink"),
-            ("一起玩 (Play)", "play"),
-            ("去工作 (Work)", "work"),
-            ("去睡觉 (Sleep)", "sleep"),
-            ("写代码 (Code Animation)", "code") 
-        ]
-        
-        for name, type_ in actions:
-            act = QAction(name, self)
-            act.triggered.connect(lambda checked, t=type_: self.interact(t))
-            menu.addAction(act)
+        actions = [("投喂 (Eat)", "eat"), ("喝水 (Drink)", "drink"), ("玩耍 (Play)", "play"), 
+                   ("工作 (Work)", "work"), ("睡觉 (Sleep)", "sleep"), ("写代码 (Code)", "code")]
+        for name, key in actions:
+            menu.addAction(name, lambda k=key: self.core.interact(k))
         
         menu.addSeparator()
-        action_quit = QAction("退出程序", self)
-        action_quit.triggered.connect(self.close) 
-        menu.addAction(action_quit)
-
+        menu.addAction("退出程序", self.close) # 触发 closeEvent -> start_exit_process
         menu.exec(event.globalPos())
 
-    def interact(self, action_type):
-        print(f"Interact: {action_type}")
-        if self.pos_anim.state() == QPropertyAnimation.State.Running:
-            self.pos_anim.stop()
-            try: self.pos_anim.finished.disconnect()
-            except TypeError: pass
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        for w in [self.chat_window, self.settings_window, self.init_setup_window]:
+            if w and w.isVisible(): w.update_position()
 
-        if action_type == "eat":
-            self.current_role_state = "idle"
-            self.stats['hunger'] = max(0, self.stats['hunger'] - 20)
-            self.stats['intimacy'] += 5
-            self.stats['mood'] += 2
-            self.play_animation(ANIMATION_PATH.ACTION_SING_EAT, ANIMATION_CONFIG.CONFIG_ACTION_SING)
-        elif action_type == "drink":
-            self.current_role_state = "idle"
-            self.stats['thirst'] = max(0, self.stats['thirst'] - 20)
-            self.stats['intimacy'] += 5
-            self.stats['mood'] += 1
-            self.play_animation(ANIMATION_PATH.ACTION_SING_DRINK, ANIMATION_CONFIG.CONFIG_ACTION_SING)
-        elif action_type == "play":
-            self.current_role_state = "play"
-            self.play_animation(ANIMATION_PATH.ACTION_CONT_PLAY, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        elif action_type == "work":
-            self.current_role_state = "work"
-            self.play_animation(ANIMATION_PATH.ACTION_CONT_WORK, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        elif action_type == "sleep":
-            self.current_role_state = "sleep"
-            self.play_animation(ANIMATION_PATH.ACTION_CONT_SLEEP, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-        elif action_type == "code":
-            self.current_role_state = "code"
-            self.play_animation(ANIMATION_PATH.ACTION_CONT_CODE, ANIMATION_CONFIG.CONFIG_ACTION_CONT)
-
-    def _on_drop_finished(self):
-        anim_stand = (ANIMATION_PATH.MOVEMENT_SING_STAND, ANIMATION_CONFIG.CONFIG_MOVEMENT_SING)
-        self.play_animation(ANIMATION_PATH.MOVEMENT_SING_LAND, ANIMATION_CONFIG.CONFIG_MOVEMENT_SING, next_anim=anim_stand)
+    def closeEvent(self, event):
+        """
+        拦截关闭事件，执行优雅退出流程。
+        """
+        if self.is_exiting:
+            event.accept()
+            # 确保子线程退出
+            QApplication.quit()
+        else:
+            event.ignore()
+            # 启动退出流程
+            self.core.start_exit_process()

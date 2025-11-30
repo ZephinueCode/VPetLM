@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import sys
 
 # 尝试导入默认参数作为初始配置
 try:
@@ -41,6 +42,16 @@ DEFAULT_SETTINGS = {
     "coder_model_name": CODER_MODEL_NAME
 }
 
+def safe_print(text):
+    """安全打印函数，防止 Windows 控制台编码错误"""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        try:
+            print(text.encode('utf-8', errors='ignore').decode('utf-8'))
+        except:
+            print("[Log] (Content hidden due to encoding error)")
+
 class MemoryManager:
     def __init__(self):
         self._ensure_directories()
@@ -73,7 +84,7 @@ class MemoryManager:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"Error writing to {filepath}: {e}")
+            safe_print(f"Error writing to {filepath}: {e}")
 
     # --- 设置管理 (Settings) ---
     def load_settings(self):
@@ -89,7 +100,7 @@ class MemoryManager:
     def save_settings(self, settings):
         """保存设置"""
         self._write_json(SETTINGS_FILE, settings)
-        print("[Settings] Configuration saved.")
+        safe_print("[Settings] Configuration saved.")
 
     # --- 长期记忆 (Long Term & Relationship) ---
     def load_long_term_memories(self):
@@ -111,7 +122,7 @@ class MemoryManager:
         if content not in memories:
             memories.append(content)
             self.save_long_term_memories(memories)
-            print(f"[Memory] Memorized: {content}")
+            safe_print(f"[Memory] Memorized: {content}")
 
     def is_fresh_start(self):
         """判断是否是初次见面（记忆中只有默认的关系条目）"""
@@ -126,13 +137,13 @@ class MemoryManager:
         old_status = memories[0]
         memories[0] = f"Relationship: {new_status}"
         self.save_long_term_memories(memories)
-        print(f"[Relationship] Changed from '{old_status}' to '{memories[0]}'")
+        safe_print(f"[Relationship] Changed from '{old_status}' to '{memories[0]}'")
 
     def reset_long_term_memories(self):
         """重置长期记忆到初始状态"""
         initial_memories = ["Relationship: Stranger"]
         self.save_long_term_memories(initial_memories)
-        print("[Memory] Long-term memories reset to default.")
+        safe_print("[Memory] Long-term memories reset to default.")
 
     # --- 中期记忆 (Recent Memory) ---
     def load_recent_memories(self):
@@ -148,12 +159,13 @@ class MemoryManager:
         if len(memories) > 10:
             memories = memories[-10:]
         self._write_json(RECENT_MEMORY_FILE, {"recent_memories": memories})
-        print(f"[Recent Memory] Saved summary: {summary[:20]}...")
+        # 截断打印，防止特殊字符报错
+        safe_print(f"[Recent Memory] Saved summary.")
 
     def clear_recent_memories(self):
         """清空中期记忆"""
         self._write_json(RECENT_MEMORY_FILE, {"recent_memories": []})
-        print("[Memory] Recent memories cleared.")
+        safe_print("[Memory] Recent memories cleared.")
 
     # --- 状态数值 (Current Status) ---
     def load_status(self):

@@ -17,7 +17,8 @@ from src.prompts import (
     get_active_initiation_prompt, 
     get_summary_prompt, 
     get_coder_system_prompt,
-    get_self_intro_prompt
+    get_self_intro_prompt,
+    get_goodbye_prompt
 )
 from src.memory_utils import MemoryManager
 
@@ -205,6 +206,29 @@ class LLMClient:
         except Exception as e:
             print(f"Self Intro Error: {e}")
             return "你好！很高兴见到你！", {}
+
+    def get_goodbye_message(self, persona_text):
+        """生成告别语"""
+        if not self.client: return "再见啦！", {}
+        
+        prompt = get_goodbye_prompt(persona_text)
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "system", "content": prompt}],
+                temperature=0.9,
+            )
+            text_reply = completion.choices[0].message.content.strip()
+            _record_usage(completion.usage)
+            text_reply = re.sub(r'<ACTION>.*?</ACTION>', '', text_reply, flags=re.DOTALL).strip()
+            
+            self.context_window.append({"role": "assistant", "content": text_reply})
+            self.session_raw_history.append(f"Pet (Goodbye): {text_reply}")
+            
+            return text_reply, {}
+        except Exception as e:
+            print(f"Goodbye Error: {e}")
+            return "拜拜！下次见！", {}
 
     def initiate_conversation(self, current_stats, persona_text):
         if not self.client: return "...", {}

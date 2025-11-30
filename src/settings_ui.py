@@ -413,7 +413,8 @@ class SettingsWindow(QWidget):
         reply = QMessageBox.question(self, "确认", "确定要清空所有中期记忆（对话摘要）吗？\n这将导致桌宠忘记之前的聊天上下文。",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            self.pet.memory_manager.clear_recent_memories()
+            # [修正] 通过 self.pet.core 访问 memory_manager
+            self.pet.core.memory_manager.clear_recent_memories()
             QMessageBox.information(self, "成功", "中期记忆已清空。")
 
     def reset_long_term_memory(self):
@@ -421,7 +422,8 @@ class SettingsWindow(QWidget):
         reply = QMessageBox.question(self, "警告", "确定要重置长期记忆吗？\n这将清除所有用户画像和关系进度，重置为陌生人！此操作不可逆。",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            self.pet.memory_manager.reset_long_term_memories()
+            # [修正] 通过 self.pet.core 访问 memory_manager
+            self.pet.core.memory_manager.reset_long_term_memories()
             QMessageBox.information(self, "成功", "长期记忆已重置为默认状态。")
 
     def save_settings(self):

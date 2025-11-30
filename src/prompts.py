@@ -123,7 +123,7 @@ def get_action_agent_prompt(current_stats, memories, user_input, assistant_reply
 <ACTION>
 {{
     "animate": "EMOTION_SING_HAPPY",
-    "adjust": {{ "mood": 0.5 }}
+    "adjust": {{ "mood": 0.1 }}
 }}
 </ACTION>
 """
@@ -140,7 +140,7 @@ def get_active_initiation_prompt(current_stats, memories, recent_history_text, p
 {persona_text}
 
 【当前状态】
-关系：{relationship} | 心情：{current_stats.get('mood', 50)} | 无聊：{current_stats.get('boredom', 30)}
+关系：{relationship} | 饥饿：{current_stats.get('hunger', 0)} | 口渴：{current_stats.get('thirst', 0)} | 心情：{current_stats.get('mood', 50)} | 无聊：{current_stats.get('boredom', 30)}
 
 【最近氛围】
 {recent_history_text}
@@ -164,8 +164,6 @@ def get_coder_system_prompt(current_stats, memories, persona_text):
 1. 专业、精确，代码无误。
 2. 保持人物设定中语气。
 3. 代码使用 Markdown 代码块包裹。
-4. 你可以在回复末尾附带简单的动作：
-   <ACTION>{{"animate": "ACTION_CONT_CODE"}}</ACTION>
 """
 
 def get_summary_prompt(chat_history_text, memories):
@@ -193,11 +191,27 @@ def get_self_intro_prompt(persona_text):
 
 【场景】
 你刚刚被用户唤醒/启动，这是你和用户的**第一次见面**。
-目前你们的关系是：陌生人。
+目前你们的关系是：Stranger。
 
 【任务】
 1. 做一个简短、符合人设的自我介绍（50字以内）。
 2. 表达出想更了解用户意愿，并引导用户填写屏幕上弹出的“个人信息卡”。
-3. 语气要礼貌、期待，但是又不失距离（你和用户刚认识）。
+3. 语气要友好、礼貌。
 4. **不要**使用动作标签（如 <ACTION>），只输出你想说的话。
+"""
+
+def get_goodbye_prompt(persona_text):
+    """
+    退出程序时的道别 Prompt
+    """
+    return f"""
+{persona_text}
+
+【场景】
+用户准备离开了。
+
+【任务】
+请和用户做一个简短的道别（20字以内）。
+语气要符合当前的好感度和关系，表现出不舍或期待下次再见。
+只输出文本。
 """
